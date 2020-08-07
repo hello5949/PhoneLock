@@ -43,7 +43,7 @@ def getSample(path):
 			input.append(raw)
 	return np.array(input),np.array(label)
 
-x,y = getSample("sample.csv")
+x,y = getSample("sample_clear.csv")
 print(x.shape)
 print(y.shape)  
 
@@ -198,7 +198,7 @@ for Node in Nodes:
                     lr_set.append(LR)
                     activation_set.append(Activation)
                     loss_func_set.append(Loss_func)
-                    with open('GS_AE_0804_5p_Nor_STD_layer.csv', 'w', newline='') as csvfile:
+                    with open('GS_AE_0804_5p_Nor_STD_layer_clear.csv', 'w', newline='') as csvfile:
                         writer = csv.writer(csvfile)
                         writer.writerow(['Set', 'loss', 'Layer','Node','LR','Activation','loss_Func'])
                         for i in range(len(loss_set)):
