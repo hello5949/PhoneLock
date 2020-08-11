@@ -12,8 +12,8 @@ from keras.callbacks import EarlyStopping
 
 output_size=5 #參數大小
 input_size = 8192 #輸入Feature大小
-ClassSampleNum = 240 #每個類別的樣本數
-TestSetNum = 40
+ClassSampleNum = 250 #每個類別的樣本數
+TestSetNum = 100
 f_min = 150
 f_max = 70000
 Resolution = 140000 / 16384
@@ -22,7 +22,7 @@ def getSample(path):
 	input = []
 	with open(path, 'r', encoding='utf-8') as data:
 		read = csv.reader(data)
-		first_skip=True
+		first_skip=False
 		for line in read:
 			if first_skip:
 				first_skip=False
@@ -32,7 +32,7 @@ def getSample(path):
 			
 			label.append(int(line[0]))
 			raw = []
-			for i in line[1::]:
+			for i in line[0::]:
 				num=float(i)
 				if num>0:
 					raw.append(num)
@@ -121,14 +121,14 @@ def Reorganize(x):
     return new_x, len(new_x[0])
 
 
-def LayerCreate(layerNum, maxNode, room=None):
+def LayerCreate(layerNum, maxNode, Activation, room=None):
     node = maxNode
     nodeList = []
     if room == None:
         room = 2
-
     # encoder
     model.add(Dense(maxNode, activation=Activation, input_shape = (input_size,)))
+    print(Activation, input_size)
     nodeList.append(maxNode)
     if layerNum == 0 or maxNode == 1:
         model.add(Dense(input_size))
@@ -163,13 +163,14 @@ node_set = []
 layer_set = []
 activation_set = []
 loss_func_set = []
+evaluate_history = []
 
 # GS parameter
 Nodes = [10,9,8,7,6,5,4,3,2,1]
-Layers = [4,3,2,1,0]
+Layers = [2,1,0]
 LRs = [0.001,0.01]
-Activations = ['relu','tanh']
-Loss_funcs = ['mse','mae']
+Activations = ['relu','tanh','sigmoid']
+Loss_funcs = ['mae']
 # GS parameter:layer zoom lr activation loss_func
 for Node in Nodes:
     for Layer in Layers:
@@ -182,14 +183,14 @@ for Node in Nodes:
                         K.clear_session()
                         model = Sequential()
                         # model.add(BatchNormalization(axis=-1, epsilon=0.001, center=True, input_shape = (input_size,)))   
-                        LayerCreate(Layer, Node, 2)
+                        LayerCreate(Layer, Node, Activation, 2)
                         print(model.summary())
                         adam = Adam(lr=LR)
                         model.compile(optimizer='adam', loss=Loss_func)
                         ES_Acc = EarlyStopping(monitor='val_loss',min_delta=0, mode='min', verbose=1, patience=50)
-                        history = model.fit(x[j*ClassSampleNum:((j+1)*ClassSampleNum)-TestSetNum,:], x[j*ClassSampleNum:((j+1)*ClassSampleNum)-TestSetNum,:], 
-                        epochs=500, batch_size=600, shuffle=True, callbacks=([ES_Acc]), 
-                        validation_data=(x[(j*ClassSampleNum)+(ClassSampleNum-TestSetNum):(j+1)*ClassSampleNum], x[(j*ClassSampleNum)+(ClassSampleNum-TestSetNum):(j+1)*ClassSampleNum]))
+                        history = model.fit(x[j*ClassSampleNum:((j+1)*ClassSampleNum)-TestSetNum-1,:], x[j*ClassSampleNum:((j+1)*ClassSampleNum)-TestSetNum-1,:], 
+                        epochs=600, batch_size=600, shuffle=True, callbacks=([ES_Acc]), 
+                        validation_data=(x[(j*ClassSampleNum)+(ClassSampleNum-TestSetNum):(j+1)*ClassSampleNum-1], x[(j*ClassSampleNum)+(ClassSampleNum-TestSetNum):(j+1)*ClassSampleNum-1]))
                         model.save('./AE_Model/model_'+repr(j)+'/model_'+repr(j)+'.h5')
                         
                     loss_set.append(min(history.history['loss']))
@@ -198,7 +199,7 @@ for Node in Nodes:
                     lr_set.append(LR)
                     activation_set.append(Activation)
                     loss_func_set.append(Loss_func)
-                    with open('GS_AE_0804_5p_Nor_STD_layer_clear.csv', 'w', newline='') as csvfile:
+                    with open('GS_AE_0807_5p_Nor_STD_layer_clear.csv', 'w', newline='') as csvfile:
                         writer = csv.writer(csvfile)
                         writer.writerow(['Set', 'loss', 'Layer','Node','LR','Activation','loss_Func'])
                         for i in range(len(loss_set)):
@@ -221,6 +222,14 @@ for Node in Nodes:
                             cc.append(class_model[i].evaluate(pred_Data[j],pred_Data[j]))
                         evaluate_result.append(cc)
                         
+                    ##save the loss of evaluate to csv
+                    evaluate_history.extend(evaluate_result)
+                    with open('GS_AE_0807_evaluateResult.csv', 'w', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+                        writer.writerow(['Set','Phone_1', 'Phone_2', 'Phone_3','Phone_4','Phone_4'])
+                        writer.writerows(evaluate_history)
+
+                    #畫圖&存圖
                     for i in range(output_size):
                         plt.plot(evaluate_result[i])
                     plt.grid(color='gray', linestyle='-', linewidth=0.5)

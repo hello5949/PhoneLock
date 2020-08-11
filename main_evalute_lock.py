@@ -42,8 +42,9 @@ import tensorflow as tf
 
 output_size=5 #類別數
 input_size = 8192 #輸入Feature大小
-ClassSampleNum = 240 #每個類別的樣本數
-TestSetNum = 40
+ClassSampleNum = 325 #每個類別的樣本數
+verifSetNum = 75
+TestSetNum = 50
 f_min = 150
 f_max = 70000
 Resolution = 140000 / 16384
@@ -52,7 +53,7 @@ def getSample(path):
 	input = []
 	with open(path, 'r', encoding='utf-8') as data:
 		read = csv.reader(data)
-		first_skip=True
+		first_skip=False
 		for line in read:
 			if first_skip:
 				first_skip=False
@@ -62,7 +63,7 @@ def getSample(path):
 			
 			label.append(int(line[0]))
 			raw = []
-			for i in line[1::]:
+			for i in line[0::]:
 				num=float(i)
 				if num>0:
 					raw.append(num)
@@ -73,12 +74,39 @@ def getSample(path):
 			input.append(raw)
 	return np.array(input),np.array(label)
 
-x,y = getSample("sample.csv")
+x,y = getSample("sample_clear.csv")
+print(np.shape(x))
+
 std_x = np.std(x)
 mean_x = np.mean(x)
 x = (x-mean_x)/std_x
-print(x.shape)
-print(y.shape)  
+
+def sampleSplit(x, trainNum, validNum, testNum):
+    totleNum = trainNum+ validNum+ testNum
+    if totleNum > ClassSampleNum:
+        return 0
+    x_train = []
+    x_valid = []
+    x_test = []
+    for i in range(output_size):
+        np.random.shuffle(x[i*ClassSampleNum:(i+1)*ClassSampleNum])
+        x_train.append(x[i*ClassSampleNum :i*ClassSampleNum +trainNum])
+        x_valid.append(x[i*ClassSampleNum +trainNum:i*ClassSampleNum +trainNum+ validNum])
+        x_test.append(x[i*ClassSampleNum +trainNum+ validNum:i*ClassSampleNum +trainNum+ validNum+ testNum])
+
+    return x_train, x_valid, x_test
+
+x_train, x_valid, x_test = sampleSplit(x,ClassSampleNum-verifSetNum-TestSetNum,verifSetNum,TestSetNum)
+x_train = np.reshape(x_train, (output_size*(ClassSampleNum-verifSetNum-TestSetNum),input_size,1))
+x_valid = np.reshape(x_valid, (output_size*verifSetNum,input_size,1))
+x_test = np.reshape(x_test, (output_size*TestSetNum,input_size,1))
+x_train = np.array(x_train)
+x_valid = np.array(x_valid)
+x_test = np.array(x_test)
+print(np.shape(x_train))
+print(np.shape(x_valid))
+print(np.shape(x_test))
+
 
 def Reorganize(x):
     x = np.reshape(x, (len(x), 8192))
@@ -201,20 +229,24 @@ for i in range(output_size):
     
 ##跑lose
 evaluate_result_test = []
+evaluate_result_valid = []
 evaluate_result_train = []
 for i in range(output_size):
     cc = []
-    for j in range(output_size*TestSetNum):
-        cc.append(class_model[i].evaluate(pred_Data_test[j],pred_Data_test[j])) ## test set
-    evaluate_result_test.append(cc)
-    
-    cc = []
-    for j in range((ClassSampleNum-TestSetNum)*output_size):
-        cc.append(class_model[i].evaluate(pred_Data_train[j],pred_Data_train[j]))  ## train set
+    for j in range(output_size*(ClassSampleNum-verifSetNum-TestSetNum)):
+        cc.append(class_model[i].evaluate(x_train[j].T,x_train[j].T)) ## test set
     evaluate_result_train.append(cc)
+    cc = []
+    for j in range(output_size*TestSetNum):
+        cc.append(class_model[i].evaluate(x_test[j].T,x_test[j].T)) ## test set
+    evaluate_result_test.append(cc)
+    cc = []
+    for j in range(verifSetNum*output_size):
+        cc.append(class_model[i].evaluate(x_valid[j].T,x_valid[j].T))  ## train set
+    evaluate_result_valid.append(cc)
 
 #Greedy AE
-sample_num = TestSetNum*output_size  #test sample num per class
+sample_num = verifSetNum  #test sample num per class
 TPR_list = []
 FPR_list = []
 PRE_list = []
@@ -224,16 +256,16 @@ TN_list = []
 FP_list = []
 FN_list = []
 Threshold_list = []
-sort_lose = np.sort(evaluate_result_train)
-print(len(evaluate_result_train[0]), np.log2(len(evaluate_result_train[0])))
+sort_lose = np.sort(evaluate_result_valid)
+print(len(evaluate_result_valid[0]), np.log2(len(evaluate_result_valid[0])))
 for Model_num in range(output_size):
     G_index = int(len(sort_lose[0])/2)
     min_index = 0
-    max_index = len(evaluate_result_train[Model_num])
+    max_index = len(evaluate_result_valid[Model_num])
     MAX_ACC = 0
-    for j in range(int(np.log2(len(evaluate_result_train[Model_num])))+20):
-    
-        TPR, FPR, PRE, ACC, TP, TN, FP, FN = Greedy(evaluate_result_train, Model_num, sample_num, G_index)
+    for j in range(int(np.log2(len(evaluate_result_valid[Model_num])))+20):
+
+        TPR, FPR, PRE, ACC, TP, TN, FP, FN = Greedy(evaluate_result_valid, Model_num, sample_num, G_index)
         
         if MAX_ACC == 0:
             MAX_ACC = ACC
@@ -242,7 +274,7 @@ for Model_num in range(output_size):
             index_bias = 0
             while ACC == MAX_ACC:
                 index_bias = index_bias + 1
-                TPR, FPR, PRE, ACC, TP, TN, FP, FN = Greedy(evaluate_result_train, Model_num, sample_num, G_index+index_bias)
+                TPR, FPR, PRE, ACC, TP, TN, FP, FN = Greedy(evaluate_result_valid, Model_num, sample_num, G_index+index_bias)
                 # if((G_index+index_bias) >= max_index and ACC < MAX_ACC):
                     # max_index = G_index
                     # G_index = int((G_index+min_index)/2)
@@ -259,7 +291,7 @@ for Model_num in range(output_size):
         elif ACC < MAX_ACC:
             min_index = G_index
             G_index = int((G_index+max_index)/2)
-        TPR, FPR, PRE, ACC, TP, TN, FP, FN = Greedy(evaluate_result_train, Model_num, sample_num, G_index+index_bias)
+        TPR, FPR, PRE, ACC, TP, TN, FP, FN = Greedy(evaluate_result_valid, Model_num, sample_num, G_index+index_bias)
         # print(ACC, MAX_ACC, min_index, G_index, max_index)
         print(Model_num, ACC, MAX_ACC, min_index, G_index, max_index, "砍人 : ", TP, TN, FP, FN)
                 
@@ -317,7 +349,7 @@ print("TP : ", TP_list)
 print("TN : ", TN_list)
 print("FP : ", FP_list)
 print("FN : ", FN_list)
-print(np.shape(evaluate_result_train), np.shape(evaluate_result_test))
+print(np.shape(evaluate_result_valid), np.shape(evaluate_result_test))
 with open('Evalute_Result.csv', 'w', newline='') as csvfile:
     writer = csv.writer(csvfile)
     writer.writerow(['TP', 'TN','FP','FN','TPR','FPR','PRE','ACC'])
@@ -325,27 +357,27 @@ with open('Evalute_Result.csv', 'w', newline='') as csvfile:
         writer.writerow([TP_list[i],  TN_list[i], FP_list[i], FN_list[i], TPR_list[i], FPR_list[i], PRE_list[i], ACC_list[i]])
 
     writer.writerow(['Model_1_Train', 'Model_2_Train','Model_3_Train','Model_4_Train','Model_5_Train'])
-    writer.writerows(evaluate_result_train)
+    writer.writerows(evaluate_result_valid)
     writer.writerow(['Model_1_Test', 'Model_2_Test','Model_3_Test','Model_4_Test','Model_5_Test'])
     writer.writerows(evaluate_result_test)
     
 
 model_name = ['Model_I-7p','Model_I-8p','Model_Sam-A7','LG','Model_I-XR']
 print(np.shape(model_name))
-x_threshold = np.arange(output_size*(ClassSampleNum-TestSetNum))
+x_threshold = np.arange(output_size*verifSetNum)
 
 for i in range(output_size):
-    y_threshold = np.ones(output_size*(ClassSampleNum-TestSetNum))*Threshold_list[i]
-    plt.plot(evaluate_result_train[i])
+    y_threshold = np.ones(output_size*verifSetNum)*Threshold_list[i]
+    plt.plot(evaluate_result_valid[i])
     plt.plot(x_threshold,y_threshold)
     plt.title("AE model_"+repr(model_name[i][:]))
     plt.grid(color='gray', linestyle='-', linewidth=0.5)
     plt.xlabel('    I-7p               I-8p          Sam-A7           LG           I-XR')
     plt.ylabel('loss')
     # plt.legend(model_name)
-    new_ticks = np.linspace(0, output_size*(ClassSampleNum-TestSetNum), output_size+1)
+    new_ticks = np.linspace(0, output_size*verifSetNum, output_size+1)
     plt.xticks(new_ticks)
-    # plt.show()
+    plt.show()
     
 x_threshold = np.arange(output_size*TestSetNum)
 for i in range(output_size):

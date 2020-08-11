@@ -18,8 +18,9 @@ import tensorflow as tf
 
 output_size=5 #參數大小
 input_size = 8192 #輸入Feature大小
-ClassSampleNum = 240 #每個類別的樣本數
-TestSetNum = 40
+ClassSampleNum = 325 #每個類別的樣本數
+verifSetNum = 75
+TestSetNum = 50
 f_min = 150
 f_max = 70000
 Resolution = 140000 / 16384
@@ -28,7 +29,7 @@ def getSample(path):
 	input = []
 	with open(path, 'r', encoding='utf-8') as data:
 		read = csv.reader(data)
-		first_skip=True
+		first_skip=False
 		for line in read:
 			if first_skip:
 				first_skip=False
@@ -38,7 +39,7 @@ def getSample(path):
 			
 			label.append(int(line[0]))
 			raw = []
-			for i in line[1::]:
+			for i in line[0::]:
 				num=float(i)
 				if num>0:
 					raw.append(num)
@@ -49,9 +50,35 @@ def getSample(path):
 			input.append(raw)
 	return np.array(input),np.array(label)
 
-x,y = getSample("sample.csv")
+x,y = getSample("sample_clear.csv")
 print(x.shape)
 print(y.shape)  
+
+std_x = np.std(x)
+mean_x = np.mean(x)
+x = (x-mean_x)/std_x
+print(std_x, mean_x)
+
+def sampleSplit(x, trainNum, validNum, testNum):
+    totleNum = trainNum+ validNum+ testNum
+    if totleNum > ClassSampleNum:
+        return 0
+    x_train = []
+    x_valid = []
+    x_test = []
+    for i in range(output_size):
+        np.random.shuffle(x[i*ClassSampleNum:(i+1)*ClassSampleNum])
+        x_train.append(x[i*ClassSampleNum :i*ClassSampleNum +trainNum])
+        x_valid.append(x[i*ClassSampleNum +trainNum:i*ClassSampleNum +trainNum+ validNum])
+        x_test.append(x[i*ClassSampleNum +trainNum+ validNum:i*ClassSampleNum +trainNum+ validNum+ testNum])
+
+    return x_train, x_valid, x_test
+
+x_train, x_valid, x_test = sampleSplit(x,ClassSampleNum-verifSetNum-TestSetNum,verifSetNum,TestSetNum)
+x_train = np.array(x_train)
+x_valid = np.array(x_valid)
+x_test = np.array(x_test)
+    
 
 def Reorganize(x):
     x = np.reshape(x, (len(x), 8191))
@@ -125,15 +152,36 @@ def Reorganize(x):
     # plt.show()
     return new_x, len(new_x[0])
     
+def LayerCreate(layerNum, maxNode, Activation, room=None):
+    node = maxNode
+    nodeList = []
+    if room == None:
+        room = 2
+    # encoder
+    model.add(Dense(maxNode, activation=Activation, input_shape = (input_size,)))
+    print(Activation, input_size)
+    nodeList.append(maxNode)
+    if layerNum == 0 or maxNode == 1:
+        model.add(Dense(input_size))
+        return 0
+
+    for i in range(layerNum):
+        node = int(node/room)
+        nodeList.append(node)
+        model.add(Dense(node))
+        if node <=1:
+            break
+    # decoder
+    for i in range(len(nodeList)):
+        model.add(Dense(nodeList[len(nodeList)-i-1]))
+    model.add(Dense(input_size))
+
+    
 # x, input_size = Reorganize(x)
-print(np.shape(x), np.shape(y))
-std_x = np.std(x)
-mean_x = np.mean(x)
-x = (x-mean_x)/std_x
-print(std_x, mean_x)
 loss_set = []
 # train parameter
-parameter_set = [[9,0.001,'relu','mae']]
+#Layer Node LR activation lossFunc
+parameter_set = [[2,10,0.01,'sigmoid','mae'],[1,10,0.01,'relu','mae'],[1,7,0.01,'relu','mae'],[0,10,0.01,'relu','mae'],[2,9,0.01,'tanh','mae'],[2,8,0.01,'relu','mae'],[1,8,0.001,'relu','mae'],[0,4,0.01,'relu','mae']]
 epoch = 5000
 step = 0
 for hyperparameter in parameter_set:
@@ -142,23 +190,25 @@ for hyperparameter in parameter_set:
         keras.backend.clear_session()
         model = Sequential()
         # model.add(BatchNormalization(axis=-1, epsilon=0.001, center=True, input_shape = (input_size,)))
-        model.add(Dense(int(hyperparameter[0]), activation=hyperparameter[2], input_shape = (input_size,)))
-        model.add(Dense(input_size))
+        # model.add(Dense(int(hyperparameter[0]), activation=hyperparameter[2], input_shape = (input_size,)))
+        # model.add(Dense(input_size))
+        LayerCreate(hyperparameter[0], hyperparameter[1], hyperparameter[3], 2)
         print(model.summary())
-        adam = Adam(lr=float(hyperparameter[1]))
-        model.compile(optimizer='adam', loss=hyperparameter[3])
-        ES_Acc = EarlyStopping(monitor='val_loss',min_delta=0, mode='min', verbose=1, patience=100)
-        history = model.fit(x[i*ClassSampleNum:((i+1)*ClassSampleNum)-TestSetNum,:], x[i*ClassSampleNum:((i+1)*ClassSampleNum)-TestSetNum,:],
+        adam = Adam(lr=float(hyperparameter[2]))
+        model.compile(optimizer='adam', loss=hyperparameter[4])
+        ES_Acc = EarlyStopping(monitor='val_loss',min_delta=0, mode='min', verbose=1, patience=25)
+        history = model.fit(x_train[i], x_train[i],
          epochs=epoch, batch_size=256, shuffle=True, callbacks=([ES_Acc]),
-         validation_data=(x[(i*ClassSampleNum)+(ClassSampleNum-TestSetNum):(i+1)*ClassSampleNum], x[(i*ClassSampleNum)+(ClassSampleNum-TestSetNum):(i+1)*ClassSampleNum]))
+         validation_data=(x_valid[i], x_valid[i]))
         model.save('./AE_Model/model_'+repr(i)+'/model_'+repr(i)+'.h5')
         
         loss_set.append(history.history['loss'])
     with open('./Train_Result/train_result.csv', 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['Set', 'loss_0', 'loss_1', 'loss_2', 'loss_3', 'loss_4', 'loss_5', 'loss_6', 'loss_7', 'std = ', std_x, 'mean = ', mean_x])
-        for i in range(len(loss_set[0])):
-            writer.writerow([i+1, loss_set[0][i], loss_set[1][i], loss_set[2][i], loss_set[3][i], loss_set[4][i]])
+        writer.writerows(loss_set)
+        # for i in range(len(loss_set[0])):
+        #     writer.writerow([i+1, loss_set[0][i], loss_set[1][i], loss_set[2][i], loss_set[3][i], loss_set[4][i]])
 
     ############################evalute############################
 
